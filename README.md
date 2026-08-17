@@ -11,7 +11,8 @@ Eine installierbare, mobile Reise-App für die Flitterwochen von Philipp und Jus
 - Dynamischer Feed „Neu bei uns“ und automatisch erkannter aktueller Reisetag
 - Owner-Login mit E-Mail und Passwort, ohne öffentliche Registrierung
 - Eingebettetes CRUD für Reisetage, Aktivitäten, Sichtungen, Erinnerungen und Highlights
-- Privater Storage-Bucket mit Bildverkleinerung und Vorschau vor dem Upload
+- Privater Storage-Bucket für Bilder und Videos, Bildverkleinerung, Video-Poster und Vorschau vor dem Upload
+- Vollständiger statischer Flugplan mit zeitzonensicheren lokalen Zeiten und optionalem Live-Status über eine gecachte Supabase Edge Function
 - Ausschließlich private Packliste und Ausgaben
 - Installierbare PWA mit Offline-App-Shell und klar blockierten Offline-Schreibaktionen
 - Mobile Bottom Navigation und Desktop-Sidebar
@@ -38,7 +39,7 @@ npm run preview
 
 ## Supabase
 
-Die Migrationen unter `supabase/migrations/` erzeugen PostgreSQL-Tabellen, zwölf Reisetage, Trigger, Indizes, Storage und sämtliche RLS-Policies. v0.3 ergänzt `202608170002_public_trip_content.sql`, wodurch sämtliche Reiseinhalte öffentlich lesbar werden. Die vollständige Klick-für-Klick-Einrichtung steht in [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md). Owner-Profile werden nach Erstellung der Auth-Nutzer mit [supabase/OWNER_SETUP.sql](supabase/OWNER_SETUP.sql) angelegt.
+Die Migrationen unter `supabase/migrations/` erzeugen PostgreSQL-Tabellen, zwölf Reisetage, Trigger, Indizes, Storage und sämtliche RLS-Policies. v0.4 ergänzt ausschließlich die neue Migration `202608170003_media_and_flights.sql` für Videos und den Flugstatus-Cache. Die vollständige Klick-für-Klick-Einrichtung steht in [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md); das optionale Live-Tracking in [docs/FLIGHT_TRACKING_SETUP.md](docs/FLIGHT_TRACKING_SETUP.md). Owner-Profile werden nach Erstellung der Auth-Nutzer mit [supabase/OWNER_SETUP.sql](supabase/OWNER_SETUP.sql) angelegt.
 
 ## Gastansicht und Sicherheitsmodell
 
@@ -56,6 +57,6 @@ Der Production-Build erzeugt Manifest und Workbox-Service-Worker. App-Shell, Skr
 
 - **Vercel:** Vite-Preset, Build `npm run build`, Output `dist`; anschließend beide `VITE_SUPABASE_*`-Variablen setzen.
 - **Netlify:** `netlify.toml` enthält Build und SPA-Fallback; Variablen in Site configuration ergänzen.
-- **GitHub Pages:** Für eine Projekt-URL Vite-`base` und Routing-Fallback anpassen. Secrets gehören nicht in GitHub-Dateien.
+- **GitHub Pages:** Der Workflow `.github/workflows/deploy-pages.yml`, der Basispfad `/honeymoon/` und Hash-Routing sind vorbereitet. Die nötigen Repository-Variablen und Dashboard-Schritte stehen in [docs/GITHUB_PAGES_SETUP.md](docs/GITHUB_PAGES_SETUP.md).
 
 Nach dem Deployment die Production-URL in Supabase unter **Authentication → URL Configuration** als Site URL hinterlegen und Guest-/Owner-Flows erneut prüfen.
