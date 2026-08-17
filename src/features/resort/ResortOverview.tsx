@@ -23,7 +23,7 @@ export function ResortOverview() {
     <div className="resort-category-grid">{resortGuide.map(category=>{
       const Icon=icons[category.id]
       return <button className="resort-category-card" key={category.id} onClick={()=>setSelected(category)} aria-haspopup="dialog">
-        <span><Icon/></span><div><h3>{category.title}</h3><p>{category.summary}</p></div><b>{String(category.items.length).padStart(2,'0')}</b>
+        <span><Icon/></span><div><h3>{category.title}</h3><p>{category.summary}</p><span className="resort-category-cta">Details ansehen <i aria-hidden="true">→</i></span></div><b>{String(category.items.length).padStart(2,'0')}</b>
       </button>
     })}</div>
     <p className="resort-guide-freshness"><strong>Stand: August 2026</strong><span>Öffnungszeiten und Angebote können sich kurzfristig ändern. Im Zweifel gelten die aktuellen Informationen des Resorts vor Ort.</span></p>
