@@ -14,6 +14,7 @@ Eine installierbare, mobile Reise-App für die Flitterwochen von Philipp und Jus
 - Privater Storage-Bucket für Bilder und Videos, Bildverkleinerung, Video-Poster und Vorschau vor dem Upload
 - Vollständiger statischer Flugplan mit zeitzonensicheren lokalen Zeiten und manuellem Live-Status durch Philipp und Justine
 - Minutenaktuelle Ortszeit für Iru Veli auf Wetterkarte und Wetterdetailseite
+- Vollständiger statischer Iru-Veli-Resort-Guide mit Villa, Gastronomie, Wellness, Aktivitäten und Erlebnissen
 - Ausschließlich private Packliste und Ausgaben
 - Installierbare PWA mit Offline-App-Shell und klar blockierten Offline-Schreibaktionen
 - Mobile Bottom Navigation und Desktop-Sidebar
