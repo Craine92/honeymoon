@@ -12,7 +12,8 @@ Eine installierbare, mobile Reise-App für die Flitterwochen von Philipp und Jus
 - Owner-Login mit E-Mail und Passwort, ohne öffentliche Registrierung
 - Eingebettetes CRUD für Reisetage, Aktivitäten, Sichtungen, Erinnerungen und Highlights
 - Privater Storage-Bucket für Bilder und Videos, Bildverkleinerung, Video-Poster und Vorschau vor dem Upload
-- Vollständiger statischer Flugplan mit zeitzonensicheren lokalen Zeiten und optionalem Live-Status über eine gecachte Supabase Edge Function
+- Vollständiger statischer Flugplan mit zeitzonensicheren lokalen Zeiten und manuellem Live-Status durch Philipp und Justine
+- Minutenaktuelle Ortszeit für Iru Veli auf Wetterkarte und Wetterdetailseite
 - Ausschließlich private Packliste und Ausgaben
 - Installierbare PWA mit Offline-App-Shell und klar blockierten Offline-Schreibaktionen
 - Mobile Bottom Navigation und Desktop-Sidebar
@@ -39,7 +40,7 @@ npm run preview
 
 ## Supabase
 
-Die Migrationen unter `supabase/migrations/` erzeugen PostgreSQL-Tabellen, zwölf Reisetage, Trigger, Indizes, Storage und sämtliche RLS-Policies. v0.4 ergänzt ausschließlich die neue Migration `202608170003_media_and_flights.sql` für Videos und den Flugstatus-Cache. Die vollständige Klick-für-Klick-Einrichtung steht in [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md); das optionale Live-Tracking in [docs/FLIGHT_TRACKING_SETUP.md](docs/FLIGHT_TRACKING_SETUP.md). Owner-Profile werden nach Erstellung der Auth-Nutzer mit [supabase/OWNER_SETUP.sql](supabase/OWNER_SETUP.sql) angelegt.
+Die Migrationen unter `supabase/migrations/` erzeugen PostgreSQL-Tabellen, zwölf Reisetage, Trigger, Indizes, Storage und sämtliche RLS-Policies. v0.5 ergänzt ausschließlich `202608170004_manual_flight_status.sql`: Sie entfernt den alten Provider-Cache und erstellt öffentliche, nur durch Owner veränderbare Flugupdates. Die vollständige Klick-für-Klick-Einrichtung steht in [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md); die Statuspflege in [docs/FLIGHT_TRACKING_SETUP.md](docs/FLIGHT_TRACKING_SETUP.md). Owner-Profile werden nach Erstellung der Auth-Nutzer mit [supabase/OWNER_SETUP.sql](supabase/OWNER_SETUP.sql) angelegt.
 
 ## Gastansicht und Sicherheitsmodell
 

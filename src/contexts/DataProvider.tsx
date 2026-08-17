@@ -6,6 +6,7 @@ import { supabase, supabaseConfigurationError } from '../lib/supabase'
 import type { Activity, AnimalType, Expense, Highlight, MediaType, Memory, PackingItem, ReefSighting, TripDay } from '../types'
 import { DataContext } from './DataContext'
 import { useAuth } from '../hooks/useAuth'
+import type { FlightState, FlightUpdate } from '../features/flights/flightTypes'
 
 interface DayRow { id:string; date:string; day_number:number; title:string|null; description:string|null; highlight:string|null; is_public:boolean }
 interface ActivityRow { id:string; trip_day_id:string; title:string; description:string|null; start_time:string|null; location:string|null; category:string; is_public:boolean; created_at:string }
@@ -14,6 +15,7 @@ interface MemoryRow { id:string; memory_date:string; title:string; description:s
 interface HighlightRow { id:string; title:string; description:string|null; highlight_date:string|null; category:string; status:'planned'|'completed'; image_url:string|null; is_public:boolean; created_at:string }
 interface PackingRow { id:string; title:string; category:string; packed:boolean }
 interface ExpenseRow { id:string; expense_date:string; description:string; amount:number; currency:string; category:Expense['category'] }
+interface FlightUpdateRow { id:string; flight_number:string; flight_date:string; status:FlightState; gate:string|null; estimated_departure:string|null; estimated_arrival:string|null; note:string|null; updated_at:string; updated_by:string|null }
 
 interface QueryResult { error: { code?: string; message: string } | null; status?: number; statusText?: string }
 function reportQueryErrors(results: Array<{ table: string; result: QueryResult }>) {
@@ -23,12 +25,17 @@ function reportQueryErrors(results: Array<{ table: string; result: QueryResult }
 }
 const mutationMessage = 'Die Änderung konnte nicht in Supabase gespeichert werden. Bitte versuche es erneut.'
 const cleanupKey='honeymoon.storage-cleanup.v1'
+const flightCacheKey='honeymoon.flight-updates.v1'
 function queueStorageCleanup(path:string){try{const items=JSON.parse(localStorage.getItem(cleanupKey)||'[]')as string[];localStorage.setItem(cleanupKey,JSON.stringify(Array.from(new Set([...items,path]))))}catch{/* Cleanup wird beim nächsten Owner-Vorgang erneut versucht. */}}
 async function retryStorageCleanup(){if(!supabase)return;try{const items=JSON.parse(localStorage.getItem(cleanupKey)||'[]')as string[];if(!items.length)return;const result=await supabase.storage.from('memories').remove(items);if(!result.error)localStorage.removeItem(cleanupKey)}catch{/* Netzwerkfehler: Queue bleibt erhalten. */}}
+function mapFlightUpdates(rows:FlightUpdateRow[]):FlightUpdate[]{return rows.map(row=>({id:row.id,flightNumber:row.flight_number,flightDate:row.flight_date,status:row.status,gate:row.gate??undefined,estimatedDeparture:row.estimated_departure?.slice(0,5),estimatedArrival:row.estimated_arrival?.slice(0,5),note:row.note??undefined,updatedAt:row.updated_at,updatedBy:row.updated_by??undefined}))}
+function cachedFlightUpdates():FlightUpdate[]{try{return JSON.parse(localStorage.getItem(flightCacheKey)||'[]')as FlightUpdate[]}catch{return[]}}
+function cacheFlightUpdates(updates:FlightUpdate[]){try{localStorage.setItem(flightCacheKey,JSON.stringify(updates))}catch{/* Der Offline-Cache ist optional. */}}
 export function DataProvider({children}:{children:ReactNode}) {
-  const { owner, user, configured } = useAuth(); const [tripDays,setTripDays]=useState<TripDay[]>(createTripDays); const [sightings,setSightings]=useState<ReefSighting[]>([]); const [memories,setMemories]=useState<Memory[]>([]); const [highlights,setHighlights]=useState<Highlight[]>([]); const [packing,setPacking]=useState<PackingItem[]>([]); const [expenses,setExpenses]=useState<Expense[]>([]); const [loading,setLoading]=useState(configured); const [error,setError]=useState<string|null>(supabaseConfigurationError)
+  const { owner, user, configured } = useAuth(); const [tripDays,setTripDays]=useState<TripDay[]>(createTripDays); const [sightings,setSightings]=useState<ReefSighting[]>([]); const [memories,setMemories]=useState<Memory[]>([]); const [highlights,setHighlights]=useState<Highlight[]>([]); const [packing,setPacking]=useState<PackingItem[]>([]); const [expenses,setExpenses]=useState<Expense[]>([]); const [flightUpdates,setFlightUpdates]=useState<FlightUpdate[]>(cachedFlightUpdates); const [flightUpdatesLoading,setFlightUpdatesLoading]=useState(configured); const [flightUpdatesStale,setFlightUpdatesStale]=useState(false); const [flightUpdatesError,setFlightUpdatesError]=useState<string|null>(null); const [loading,setLoading]=useState(configured); const [error,setError]=useState<string|null>(supabaseConfigurationError)
+  const refreshFlights=useCallback(async()=>{const client=supabase;if(!client){setFlightUpdatesLoading(false);return}setFlightUpdatesLoading(true);const result=await client.from('flight_updates').select('*').order('flight_date');if(result.error){if(import.meta.env.DEV)console.warn('[Supabase flight updates]',{code:result.error.code,status:result.status,message:result.error.message});setFlightUpdatesStale(cachedFlightUpdates().length>0);setFlightUpdatesError('Manuelle Flugupdates konnten nicht geladen werden. Der feste Flugplan bleibt verfügbar.')}else{const updates=mapFlightUpdates(result.data as FlightUpdateRow[]);setFlightUpdates(updates);cacheFlightUpdates(updates);setFlightUpdatesStale(false);setFlightUpdatesError(null)}setFlightUpdatesLoading(false)},[])
   const refresh=useCallback(async()=>{
-    const client=supabase; if(!client){setLoading(false);return} setLoading(true);setError(null)
+    const client=supabase; if(!client){setLoading(false);setFlightUpdatesLoading(false);return} setLoading(true);setError(null);const flightPromise=refreshFlights()
     const [daysResult,activitiesResult,reefResult,memoriesResult,highlightsResult] = await Promise.all([client.from('trip_days').select('*').order('date'),client.from('activities').select('*').order('start_time'),client.from('reef_sightings').select('*').order('sighting_date',{ascending:false}),client.from('memories').select('*').order('memory_date',{ascending:false}),client.from('highlights').select('*').order('highlight_date')])
     const publicFailures=reportQueryErrors([{table:'trip_days',result:daysResult},{table:'activities',result:activitiesResult},{table:'reef_sightings',result:reefResult},{table:'memories',result:memoriesResult},{table:'highlights',result:highlightsResult}])
     if(publicFailures.length){setError(`Supabase konnte folgende öffentliche Daten nicht laden: ${publicFailures.join(', ')}.`);setLoading(false);return}
@@ -40,9 +47,10 @@ export function DataProvider({children}:{children:ReactNode}) {
     setMemories(memoryRows.map((m,i)=>({id:m.id,date:m.memory_date,title:m.title,description:m.description??undefined,location:m.location??undefined,mediaType:m.media_type||'image',media:signed[i].media,mediaPath:signed[i].mediaPath,thumbnail:signed[i].thumbnail,thumbnailPath:signed[i].thumbnailPath,image:(m.media_type||'image')==='image'?signed[i].media:undefined,imagePath:m.image_url??undefined,favorite:m.favorite,public:true,createdAt:m.created_at})))
     setHighlights((highlightsResult.data as HighlightRow[]).map(h=>({id:h.id,title:h.title,description:h.description??undefined,date:h.highlight_date??undefined,category:h.category,status:h.status,image:h.image_url??undefined,public:true,createdAt:h.created_at})))
     if(owner){const [packResult,expenseResult]=await Promise.all([client.from('packing_items').select('*').order('created_at'),client.from('expenses').select('*').order('expense_date',{ascending:false})]);const privateFailures=reportQueryErrors([{table:'packing_items',result:packResult},{table:'expenses',result:expenseResult}]);if(privateFailures.length)setError(`Owner-Login erfolgreich, aber private Daten konnten nicht geladen werden: ${privateFailures.join(', ')}.`);if(!packResult.error)setPacking((packResult.data as PackingRow[]).map(p=>({id:p.id,label:p.title,category:p.category,packed:p.packed})));if(!expenseResult.error)setExpenses((expenseResult.data as ExpenseRow[]).map(e=>({id:e.id,date:e.expense_date,description:e.description,amount:Number(e.amount),currency:e.currency,category:e.category})));await retryStorageCleanup()}else{setPacking([]);setExpenses([])}
-    setLoading(false)
-  },[owner])
+    await flightPromise;setLoading(false)
+  },[owner,refreshFlights])
   useEffect(()=>{void Promise.resolve().then(refresh)},[refresh])
+  useEffect(()=>{const client=supabase;if(!client)return;const channel=client.channel('public-flight-updates').on('postgres_changes',{event:'*',schema:'public',table:'flight_updates'},()=>void refreshFlights()).subscribe();return()=>{void client.removeChannel(channel)}},[refreshFlights])
   const guard=()=>{if(!navigator.onLine)throw new Error('Du bist gerade offline. Änderungen können erst wieder gespeichert werden, sobald eine Verbindung besteht.');if(!supabase||!owner)throw new Error('Diese Aktion ist nur im Bearbeitungsmodus verfügbar.')}
   const run=async(action:()=>PromiseLike<{error:{message:string;code?:string}|null}>)=>{guard();const {error}=await action();if(error){if(import.meta.env.DEV)console.error('[Supabase mutation]',{code:error.code,message:error.message});throw new Error(mutationMessage)}await refresh()}
   const saveSighting=async(v:Omit<ReefSighting,'id'>&{id?:string})=>run(()=>supabase!.from('reef_sightings').upsert({id:v.id,animal_type:v.animalType,species:v.species||null,sighting_date:v.date,sighting_time:v.time||null,location:v.location||null,count:v.count,notes:v.notes||null,is_public:true},{onConflict:'id'}))
@@ -57,6 +65,7 @@ export function DataProvider({children}:{children:ReactNode}) {
   const deletePacking=async(id:string)=>run(()=>supabase!.from('packing_items').delete().eq('id',id))
   const saveExpense=async(v:Omit<Expense,'id'>)=>run(()=>supabase!.from('expenses').insert({expense_date:v.date,description:v.description,amount:v.amount,currency:v.currency,category:v.category}))
   const deleteExpense=async(id:string)=>run(()=>supabase!.from('expenses').delete().eq('id',id))
-  const value={tripDays,sightings,memories,highlights,packing,expenses,loading,error,refresh,saveSighting,deleteSighting,saveMemory,deleteMemory,saveTripDay,saveActivity,saveHighlight,deleteHighlight,savePacking,deletePacking,saveExpense,deleteExpense}
+  const saveFlightUpdate=async(v:FlightUpdate)=>{guard();const{error}=await supabase!.from('flight_updates').upsert({flight_number:v.flightNumber,flight_date:v.flightDate,status:v.status,gate:v.gate||null,estimated_departure:v.estimatedDeparture||null,estimated_arrival:v.estimatedArrival||null,note:v.note||null,updated_by:user!.id},{onConflict:'flight_number,flight_date'});if(error){if(import.meta.env.DEV)console.error('[Flight update mutation]',{code:error.code,message:error.message});throw new Error('Der Flugstatus konnte nicht gespeichert werden. Bitte prüfe Verbindung und v0.5-Migration.')}await refreshFlights()}
+  const value={tripDays,sightings,memories,highlights,packing,expenses,flightUpdates,flightUpdatesLoading,flightUpdatesStale,flightUpdatesError,loading,error,refresh,saveFlightUpdate,saveSighting,deleteSighting,saveMemory,deleteMemory,saveTripDay,saveActivity,saveHighlight,deleteHighlight,savePacking,deletePacking,saveExpense,deleteExpense}
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
 }
