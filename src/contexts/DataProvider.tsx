@@ -1,0 +1,59 @@
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { createTripDays } from '../data/tripDays'
+import { prepareImage } from '../lib/images'
+import { supabase, supabaseConfigurationError } from '../lib/supabase'
+import type { Activity, AnimalType, Expense, Highlight, Memory, PackingItem, ReefSighting, TripDay } from '../types'
+import { DataContext } from './DataContext'
+import { useAuth } from '../hooks/useAuth'
+
+interface DayRow { id:string; date:string; day_number:number; title:string|null; description:string|null; highlight:string|null; is_public:boolean }
+interface ActivityRow { id:string; trip_day_id:string; title:string; description:string|null; start_time:string|null; location:string|null; category:string; is_public:boolean; created_at:string }
+interface ReefRow { id:string; animal_type:AnimalType; species:string|null; sighting_date:string; sighting_time:string|null; location:string|null; count:number; notes:string|null; is_public:boolean; created_at:string }
+interface MemoryRow { id:string; memory_date:string; title:string; description:string|null; location:string|null; image_url:string|null; favorite:boolean; is_public:boolean; created_at:string }
+interface HighlightRow { id:string; title:string; description:string|null; highlight_date:string|null; category:string; status:'planned'|'completed'; image_url:string|null; is_public:boolean; created_at:string }
+interface PackingRow { id:string; title:string; category:string; packed:boolean }
+interface ExpenseRow { id:string; expense_date:string; description:string; amount:number; currency:string; category:Expense['category'] }
+
+interface QueryResult { error: { code?: string; message: string } | null; status?: number; statusText?: string }
+function reportQueryErrors(results: Array<{ table: string; result: QueryResult }>) {
+  const failed = results.filter(item => item.result.error)
+  if (import.meta.env.DEV) failed.forEach(({ table, result }) => console.error('[Supabase data query]', { table, code: result.error?.code, status: result.status, statusText: result.statusText, message: result.error?.message }))
+  return failed.map(item => item.table)
+}
+const mutationMessage = 'Die Änderung konnte nicht in Supabase gespeichert werden. Bitte versuche es erneut.'
+const cleanupKey='honeymoon.storage-cleanup.v1'
+function queueStorageCleanup(path:string){try{const items=JSON.parse(localStorage.getItem(cleanupKey)||'[]')as string[];localStorage.setItem(cleanupKey,JSON.stringify(Array.from(new Set([...items,path]))))}catch{/* Cleanup wird beim nächsten Owner-Vorgang erneut versucht. */}}
+async function retryStorageCleanup(){if(!supabase)return;try{const items=JSON.parse(localStorage.getItem(cleanupKey)||'[]')as string[];if(!items.length)return;const result=await supabase.storage.from('memories').remove(items);if(!result.error)localStorage.removeItem(cleanupKey)}catch{/* Netzwerkfehler: Queue bleibt erhalten. */}}
+export function DataProvider({children}:{children:ReactNode}) {
+  const { owner, user, configured } = useAuth(); const [tripDays,setTripDays]=useState<TripDay[]>(createTripDays); const [sightings,setSightings]=useState<ReefSighting[]>([]); const [memories,setMemories]=useState<Memory[]>([]); const [highlights,setHighlights]=useState<Highlight[]>([]); const [packing,setPacking]=useState<PackingItem[]>([]); const [expenses,setExpenses]=useState<Expense[]>([]); const [loading,setLoading]=useState(configured); const [error,setError]=useState<string|null>(supabaseConfigurationError)
+  const refresh=useCallback(async()=>{
+    const client=supabase; if(!client){setLoading(false);return} setLoading(true);setError(null)
+    const [daysResult,activitiesResult,reefResult,memoriesResult,highlightsResult] = await Promise.all([client.from('trip_days').select('*').order('date'),client.from('activities').select('*').order('start_time'),client.from('reef_sightings').select('*').order('sighting_date',{ascending:false}),client.from('memories').select('*').order('memory_date',{ascending:false}),client.from('highlights').select('*').order('highlight_date')])
+    const publicFailures=reportQueryErrors([{table:'trip_days',result:daysResult},{table:'activities',result:activitiesResult},{table:'reef_sightings',result:reefResult},{table:'memories',result:memoriesResult},{table:'highlights',result:highlightsResult}])
+    if(publicFailures.length){setError(`Supabase konnte folgende öffentliche Daten nicht laden: ${publicFailures.join(', ')}.`);setLoading(false);return}
+    const acts=(activitiesResult.data as ActivityRow[]).map(a=>({id:a.id,tripDayId:a.trip_day_id,title:a.title,description:a.description??undefined,startTime:a.start_time??undefined,location:a.location??undefined,category:a.category,public:true,createdAt:a.created_at}))
+    const rows=daysResult.data as DayRow[]; setTripDays(rows.length?rows.map(d=>({id:d.id,date:d.date,dayNumber:d.day_number,title:d.title||`Reisetag ${d.day_number}`,description:d.description||'',highlight:d.highlight??undefined,public:d.is_public,activities:acts.filter(a=>a.tripDayId===d.id)})):createTripDays())
+    setSightings((reefResult.data as ReefRow[]).map(s=>({id:s.id,animalType:s.animal_type,species:s.species??undefined,date:s.sighting_date,time:s.sighting_time?.slice(0,5),location:s.location??undefined,count:s.count,notes:s.notes??undefined,public:true,createdAt:s.created_at})))
+    const memoryRows=memoriesResult.data as MemoryRow[]; const signed=await Promise.all(memoryRows.map(async m=>m.image_url?(await client.storage.from('memories').createSignedUrl(m.image_url,3600)).data?.signedUrl:undefined)); setMemories(memoryRows.map((m,i)=>({id:m.id,date:m.memory_date,title:m.title,description:m.description??undefined,location:m.location??undefined,image:signed[i],imagePath:m.image_url??undefined,favorite:m.favorite,public:true,createdAt:m.created_at})))
+    setHighlights((highlightsResult.data as HighlightRow[]).map(h=>({id:h.id,title:h.title,description:h.description??undefined,date:h.highlight_date??undefined,category:h.category,status:h.status,image:h.image_url??undefined,public:true,createdAt:h.created_at})))
+    if(owner){const [packResult,expenseResult]=await Promise.all([client.from('packing_items').select('*').order('created_at'),client.from('expenses').select('*').order('expense_date',{ascending:false})]);const privateFailures=reportQueryErrors([{table:'packing_items',result:packResult},{table:'expenses',result:expenseResult}]);if(privateFailures.length)setError(`Owner-Login erfolgreich, aber private Daten konnten nicht geladen werden: ${privateFailures.join(', ')}.`);if(!packResult.error)setPacking((packResult.data as PackingRow[]).map(p=>({id:p.id,label:p.title,category:p.category,packed:p.packed})));if(!expenseResult.error)setExpenses((expenseResult.data as ExpenseRow[]).map(e=>({id:e.id,date:e.expense_date,description:e.description,amount:Number(e.amount),currency:e.currency,category:e.category})));await retryStorageCleanup()}else{setPacking([]);setExpenses([])}
+    setLoading(false)
+  },[owner])
+  useEffect(()=>{void Promise.resolve().then(refresh)},[refresh])
+  const guard=()=>{if(!navigator.onLine)throw new Error('Du bist gerade offline. Änderungen können erst wieder gespeichert werden, sobald eine Verbindung besteht.');if(!supabase||!owner)throw new Error('Diese Aktion ist nur im Bearbeitungsmodus verfügbar.')}
+  const run=async(action:()=>PromiseLike<{error:{message:string;code?:string}|null}>)=>{guard();const {error}=await action();if(error){if(import.meta.env.DEV)console.error('[Supabase mutation]',{code:error.code,message:error.message});throw new Error(mutationMessage)}await refresh()}
+  const saveSighting=async(v:Omit<ReefSighting,'id'>&{id?:string})=>run(()=>supabase!.from('reef_sightings').upsert({id:v.id,animal_type:v.animalType,species:v.species||null,sighting_date:v.date,sighting_time:v.time||null,location:v.location||null,count:v.count,notes:v.notes||null,is_public:true},{onConflict:'id'}))
+  const deleteSighting=async(id:string)=>run(()=>supabase!.from('reef_sightings').delete().eq('id',id))
+  const saveMemory=async(v:Omit<Memory,'id'|'image'>&{id?:string;image?:string},file?:File)=>{guard();const oldPath=v.imagePath;let newPath:string|undefined;if(file){const blob=await prepareImage(file);newPath=`${user!.id}/${crypto.randomUUID()}.${blob.type==='image/webp'?'webp':file.name.split('.').pop()||'jpg'}`;const upload=await supabase!.storage.from('memories').upload(newPath,blob,{contentType:blob.type,upsert:false});if(upload.error)throw new Error('Das Foto konnte nicht hochgeladen werden.')}const {error}=await supabase!.from('memories').upsert({id:v.id,memory_date:v.date,title:v.title,description:v.description||null,location:v.location||null,image_url:newPath||oldPath||null,favorite:v.favorite,is_public:true},{onConflict:'id'});if(error){if(newPath)await supabase!.storage.from('memories').remove([newPath]);throw new Error('Die Erinnerung konnte nicht gespeichert werden.')}if(newPath&&oldPath&&newPath!==oldPath){const cleanup=await supabase!.storage.from('memories').remove([oldPath]);if(cleanup.error){queueStorageCleanup(oldPath);await refresh();throw new Error('Erinnerung gespeichert. Das alte Foto wird beim nächsten Online-Aufruf erneut bereinigt.')}}await refresh()}
+  const deleteMemory=async(id:string)=>{guard();const path=memories.find(m=>m.id===id)?.imagePath;const {error}=await supabase!.from('memories').delete().eq('id',id);if(error)throw new Error('Die Erinnerung konnte nicht gelöscht werden.');if(path){const removed=await supabase!.storage.from('memories').remove([path]);if(removed.error){queueStorageCleanup(path);await refresh();throw new Error('Erinnerung gelöscht. Die Fotodatei wird beim nächsten Online-Aufruf erneut bereinigt.')}}await refresh()}
+  const saveTripDay=async(v:TripDay)=>run(()=>supabase!.from('trip_days').update({title:v.title,description:v.description,highlight:v.highlight||null,is_public:true}).eq('id',v.id))
+  const saveActivity=async(v:Omit<Activity,'id'>)=>run(()=>supabase!.from('activities').insert({trip_day_id:v.tripDayId,title:v.title,description:v.description||null,start_time:v.startTime||null,location:v.location||null,category:v.category,is_public:true}))
+  const saveHighlight=async(v:Omit<Highlight,'id'>)=>run(()=>supabase!.from('highlights').insert({title:v.title,description:v.description||null,highlight_date:v.date||null,category:v.category,status:v.status,image_url:v.image||null,is_public:true}))
+  const deleteHighlight=async(id:string)=>run(()=>supabase!.from('highlights').delete().eq('id',id))
+  const savePacking=async(v:Omit<PackingItem,'id'>&{id?:string})=>run(()=>supabase!.from('packing_items').upsert({id:v.id,title:v.label,category:v.category,packed:v.packed},{onConflict:'id'}))
+  const deletePacking=async(id:string)=>run(()=>supabase!.from('packing_items').delete().eq('id',id))
+  const saveExpense=async(v:Omit<Expense,'id'>)=>run(()=>supabase!.from('expenses').insert({expense_date:v.date,description:v.description,amount:v.amount,currency:v.currency,category:v.category}))
+  const deleteExpense=async(id:string)=>run(()=>supabase!.from('expenses').delete().eq('id',id))
+  const value={tripDays,sightings,memories,highlights,packing,expenses,loading,error,refresh,saveSighting,deleteSighting,saveMemory,deleteMemory,saveTripDay,saveActivity,saveHighlight,deleteHighlight,savePacking,deletePacking,saveExpense,deleteExpense}
+  return <DataContext.Provider value={value}>{children}</DataContext.Provider>
+}

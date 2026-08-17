@@ -1,0 +1,23 @@
+import { tripConfig } from '../../config/trip'
+
+export interface WeatherNow { time:string; temperature:number; humidity:number; apparentTemperature:number; precipitation:number; weatherCode:number; cloudCover:number; windSpeed:number; windDirection:number }
+export interface WeatherDay { date:string; weatherCode:number; max:number; min:number; rainProbability:number; uvIndex:number; sunrise:string; sunset:string; maxWind:number }
+export interface MarineNow { time:string; waveHeight:number; waveDirection:number; currentVelocity:number; currentDirection:number; seaTemperature:number }
+export interface WeatherBundle { updatedAt:string; current:WeatherNow; daily:WeatherDay[]; marine:MarineNow|null }
+export interface WeatherLoadResult { data:WeatherBundle|null; stale:boolean; error:string|null }
+
+const CACHE_KEY='honeymoon.weather.v1'; const CACHE_MS=20*60*1000; let memoryCache:WeatherBundle|null=null; let inFlight:Promise<WeatherBundle>|null=null
+interface WeatherResponse { current:{time:string;temperature_2m:number;relative_humidity_2m:number;apparent_temperature:number;precipitation:number;weather_code:number;cloud_cover:number;wind_speed_10m:number;wind_direction_10m:number}; daily:{time:string[];weather_code:number[];temperature_2m_max:number[];temperature_2m_min:number[];precipitation_probability_max:number[];uv_index_max:number[];sunrise:string[];sunset:string[];wind_speed_10m_max:number[]} }
+interface MarineResponse { current:{time:string;wave_height:number;wave_direction:number;ocean_current_velocity:number;ocean_current_direction:number;sea_surface_temperature:number} }
+
+function cached():WeatherBundle|null { if(memoryCache)return memoryCache;try{const raw=localStorage.getItem(CACHE_KEY);if(!raw)return null;memoryCache=JSON.parse(raw)as WeatherBundle;return memoryCache}catch{return null} }
+async function json<T>(url:string):Promise<T>{const response=await fetch(url);if(!response.ok)throw new Error(`HTTP ${response.status}`);return response.json()as Promise<T>}
+async function fetchFresh():Promise<WeatherBundle>{
+  const l=tripConfig.weatherLocation; const weather=new URL('https://api.open-meteo.com/v1/forecast'); weather.search=new URLSearchParams({latitude:String(l.latitude),longitude:String(l.longitude),timezone:l.timezone,forecast_days:'16',current:'temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m',daily:'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max,sunrise,sunset,wind_speed_10m_max'}).toString()
+  const marine=new URL('https://marine-api.open-meteo.com/v1/marine'); marine.search=new URLSearchParams({latitude:String(l.latitude),longitude:String(l.longitude),timezone:l.timezone,current:'wave_height,wave_direction,ocean_current_velocity,ocean_current_direction,sea_surface_temperature'}).toString()
+  const [weatherResponse,marineResponse]=await Promise.all([json<WeatherResponse>(weather.toString()),json<MarineResponse>(marine.toString()).catch(()=>null)]); const c=weatherResponse.current; const d=weatherResponse.daily
+  const bundle:WeatherBundle={updatedAt:new Date().toISOString(),current:{time:c.time,temperature:c.temperature_2m,humidity:c.relative_humidity_2m,apparentTemperature:c.apparent_temperature,precipitation:c.precipitation,weatherCode:c.weather_code,cloudCover:c.cloud_cover,windSpeed:c.wind_speed_10m,windDirection:c.wind_direction_10m},daily:d.time.map((date,i)=>({date,weatherCode:d.weather_code[i],max:d.temperature_2m_max[i],min:d.temperature_2m_min[i],rainProbability:d.precipitation_probability_max[i],uvIndex:d.uv_index_max[i],sunrise:d.sunrise[i],sunset:d.sunset[i],maxWind:d.wind_speed_10m_max[i]})),marine:marineResponse?{time:marineResponse.current.time,waveHeight:marineResponse.current.wave_height,waveDirection:marineResponse.current.wave_direction,currentVelocity:marineResponse.current.ocean_current_velocity,currentDirection:marineResponse.current.ocean_current_direction,seaTemperature:marineResponse.current.sea_surface_temperature}:null}
+  memoryCache=bundle;try{localStorage.setItem(CACHE_KEY,JSON.stringify(bundle))}catch{/* Wettercache ist optional. */}return bundle
+}
+export async function loadWeather(force=false):Promise<WeatherLoadResult>{const previous=cached();if(!force&&previous&&Date.now()-new Date(previous.updatedAt).getTime()<CACHE_MS)return{data:previous,stale:false,error:null};try{if(!inFlight)inFlight=fetchFresh().finally(()=>{inFlight=null});return{data:await inFlight,stale:false,error:null}}catch{return{data:previous,stale:Boolean(previous),error:'Wetterdaten gerade nicht verfügbar'}}}
+export function getCachedWeather(){return cached()}
